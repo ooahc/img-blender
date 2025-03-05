@@ -125,11 +125,22 @@ class NormalMapBlender(QMainWindow):
         self.task_tree.itemSelectionChanged.connect(self.on_selection_changed)
         # 添加双击编辑支持
         self.task_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
+        # 在树控件初始化后添加这行
+        self.task_tree.itemChanged.connect(self.on_item_renamed)
     
     def on_selection_changed(self):
         """当选择改变时更新参数表格和预览"""
         self.update_param_table()
         self.update_preview()
+
+    def on_item_renamed(self, item, column):
+        """处理任务重命名（包括F2和双击）"""
+        if not item.parent():  # 只处理任务项（不是子项）
+            new_name = item.text(0)
+            task_index = self.task_tree.indexOfTopLevelItem(item)
+            if task_index >= 0 and task_index < len(self.tasks):
+                self.tasks[task_index].name = new_name
+                print(f"Task renamed to: {new_name} (via any rename method)")  # 调试输出
 
     def on_item_double_clicked(self, item, column):
         """处理项目双击事件"""
@@ -145,11 +156,8 @@ class NormalMapBlender(QMainWindow):
             if ok and new_name:
                 # 更新树项显示
                 item.setText(0, new_name)
-                # 更新数据模型
-                task_index = self.task_tree.indexOfTopLevelItem(item)
-                if task_index >= 0 and task_index < len(self.tasks):
-                    self.tasks[task_index].name = new_name  # 确保更新任务对象的名称
-                    print(f"Task renamed to: {new_name}")  # 添加调试输出
+                # 注意：不需要在这里更新task.name，因为setText会触发itemChanged信号
+                # 更新会通过on_item_renamed处理
 
     def add_task(self):
         task_name = f"blende-task-{len(self.tasks) + 1}"
