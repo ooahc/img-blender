@@ -64,6 +64,19 @@ pip install -r requirements.txt
           "enabled": true
         }
       ]
+    },
+    {
+      "name": "布料材质混合",
+      "enabled": true,
+      "items": [
+        {
+          "name": "fabric_base.png",
+          "path": "textures/fabric_base.png",
+          "weight": 1.0,
+          "blend_mode": "Normal",
+          "enabled": true
+        }
+      ]
     }
   ]
 }
