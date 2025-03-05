@@ -11,20 +11,56 @@ from PyQt6.QtGui import QPixmap, QImage
 import cv2
 import numpy as np
 from PIL import Image
+from pathlib import Path
 
 class BlendTask:
     def __init__(self, name):
         self.name = name
         self.items = []  # 存储BlendItem对象
         self.enabled = True
+    
+    def to_dict(self):
+        """将任务转换为字典格式"""
+        return {
+            'name': self.name,
+            'enabled': self.enabled,
+            'items': [item.to_dict() for item in self.items]
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        """从字典创建任务"""
+        task = cls(data['name'])
+        task.enabled = data.get('enabled', True)
+        task.items = [BlendItem.from_dict(item) for item in data.get('items', [])]
+        return task
 
 class BlendItem:
     def __init__(self, name, path):
         self.name = name
         self.path = path
         self.weight = 1.0
-        self.blend_mode = "Normal"  # 混合模式
+        self.blend_mode = "Normal"
         self.enabled = True
+    
+    def to_dict(self):
+        """将项目转换为字典格式"""
+        return {
+            'name': self.name,
+            'path': self.path,
+            'weight': self.weight,
+            'blend_mode': self.blend_mode,
+            'enabled': self.enabled
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        """从字典创建项目"""
+        item = cls(data['name'], data['path'])
+        item.weight = data.get('weight', 1.0)
+        item.blend_mode = data.get('blend_mode', "Normal")
+        item.enabled = data.get('enabled', True)
+        return item
 
 class NormalMapBlender(QMainWindow):
     def __init__(self):
@@ -127,6 +163,17 @@ class NormalMapBlender(QMainWindow):
         self.task_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         # 在树控件初始化后添加这行
         self.task_tree.itemChanged.connect(self.on_item_renamed)
+        
+        # 在工具栏或菜单中添加导入导出按钮
+        file_menu = self.menuBar().addMenu("文件")
+        
+        import_action = file_menu.addAction("导入任务配置")
+        import_action.triggered.connect(self.import_tasks)
+        
+        export_action = file_menu.addAction("导出任务配置")
+        export_action.triggered.connect(self.export_tasks)
+        
+        file_menu.addSeparator()
     
     def on_selection_changed(self):
         """当选择改变时更新参数表格和预览"""
@@ -193,7 +240,7 @@ class NormalMapBlender(QMainWindow):
         # 如果当前选中的是子项，获取其父项
         if current_tree_item.parent():
             current_tree_item = current_tree_item.parent()
-            
+        
         for file in files:
             # 使用文件名作为项目名称
             file_name = os.path.basename(file)
@@ -246,7 +293,7 @@ class NormalMapBlender(QMainWindow):
         
         # 更新参数表格
         self.update_param_table()
-
+    
     def select_output_dir(self):
         dir_path = QFileDialog.getExistingDirectory(
             self,
@@ -261,7 +308,7 @@ class NormalMapBlender(QMainWindow):
         if not self.tasks:
             QMessageBox.warning(self, "警告", "没有可导出的任务")
             return
-        
+            
         if not self.output_dir:
             QMessageBox.warning(self, "警告", "请先选择输出目录")
             return
@@ -483,6 +530,111 @@ class NormalMapBlender(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "预览错误", f"更新预览时出错：{str(e)}")
             self.preview_label.clear()
+
+    def import_tasks(self):
+        """导入任务配置"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择任务配置文件",
+            "",
+            "JSON文件 (*.json)"
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # 检查文件路径是否需要调整
+            base_dir = str(Path(file_path).parent)
+            
+            # 清空现有任务
+            self.tasks.clear()
+            self.task_tree.clear()
+            
+            # 创建新任务
+            for task_data in data['tasks']:
+                # 调整项目中的文件路径
+                for item in task_data.get('items', []):
+                    item_path = Path(item['path'])
+                    if not item_path.is_absolute():
+                        # 如果是相对路径，则相对于JSON文件位置解析
+                        item['path'] = str(Path(base_dir) / item_path)
+                
+                task = BlendTask.from_dict(task_data)
+                self.tasks.append(task)
+                
+                # 创建树项
+                task_item = QTreeWidgetItem(self.task_tree)
+                task_item.setText(0, task.name)
+                task_item.setFlags(task_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                
+                # 创建子项
+                for blend_item in task.items:
+                    item = QTreeWidgetItem(task_item)
+                    item.setText(0, blend_item.name)
+            
+            # 更新界面
+            if self.tasks:
+                self.task_tree.setCurrentItem(self.task_tree.topLevelItem(0))
+                self.update_param_table()
+                self.update_preview()
+            
+            QMessageBox.information(self, "导入成功", f"成功导入 {len(self.tasks)} 个任务")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "导入错误", f"导入任务配置时出错：{str(e)}")
+
+    def export_tasks(self):
+        """导出任务配置"""
+        if not self.tasks:
+            QMessageBox.warning(self, "警告", "没有可导出的任务")
+            return
+            
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存任务配置",
+            "",
+            "JSON文件 (*.json)"
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            # 获取JSON文件的目标目录
+            base_dir = str(Path(file_path).parent)
+            
+            # 准备导出数据
+            export_data = {
+                'tasks': []
+            }
+            
+            for task in self.tasks:
+                task_data = task.to_dict()
+                # 将文件路径转换为相对路径
+                for item in task_data['items']:
+                    item_path = Path(item['path'])
+                    try:
+                        # 尝试转换为相对路径
+                        rel_path = item_path.relative_to(base_dir)
+                        item['path'] = str(rel_path)
+                    except ValueError:
+                        # 如果无法转换为相对路径，保持原样
+                        item['path'] = str(item_path)
+                
+                export_data['tasks'].append(task_data)
+            
+            # 保存为JSON
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            
+            QMessageBox.information(self, "导出成功", f"成功导出 {len(self.tasks)} 个任务配置")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "导出错误", f"导出任务配置时出错：{str(e)}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
