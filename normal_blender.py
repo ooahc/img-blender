@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QTreeWidget, QTreeWidgetItem, QTableWidget, 
                             QTableWidgetItem, QComboBox)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QImage
 import cv2
 import numpy as np
 from PIL import Image
@@ -322,16 +323,94 @@ class NormalMapBlender(QMainWindow):
             self.update_preview()
 
     def reset_preview(self):
-        self.preview_label.setPixmap(QPixmap())
-
-    def update_preview(self):
+        """重置所有参数到默认值"""
         current_task = self.get_selected_task()
-        if not current_task or not current_task.items:
-            self.preview_label.setPixmap(QPixmap())
+        if not current_task:
             return
         
-        img = cv2.imread(current_task.items[0].path)
-        self.preview_label.setPixmap(QPixmap.fromImage(QImage(img.data, img.shape[1], img.shape[0], QImage.Format.Format_RGB888).scaled(400, 400)))
+        for item in current_task.items:
+            item.weight = 1.0
+            item.blend_mode = "Normal"
+            item.enabled = True
+        
+        self.update_param_table()
+        self.update_preview()
+
+    def update_preview(self):
+        """更新预览图像"""
+        current_task = self.get_selected_task()
+        if not current_task or not current_task.items:
+            self.preview_label.clear()
+            return
+        
+        try:
+            # 读取第一张图确定尺寸
+            first_map = cv2.imread(current_task.items[0].path)
+            if first_map is None:
+                raise Exception(f"无法读取图像: {current_task.items[0].path}")
+            
+            height, width = first_map.shape[:2]
+            
+            # 初始化结果数组
+            result = np.zeros_like(first_map, dtype=np.float32)
+            total_weight = 0
+            
+            # 混合所有启用的法线贴图
+            for item in current_task.items:
+                if not item.enabled:
+                    continue
+                
+                img = cv2.imread(item.path)
+                if img is None:
+                    continue
+                
+                if img.shape[:2] != (height, width):
+                    img = cv2.resize(img, (width, height))
+                
+                # 根据混合模式处理
+                if item.blend_mode == "Normal":
+                    weighted_img = img.astype(np.float32) * item.weight
+                elif item.blend_mode == "Multiply":
+                    weighted_img = (img.astype(np.float32) / 255.0) * result
+                    weighted_img *= item.weight
+                elif item.blend_mode == "Add":
+                    weighted_img = result + (img.astype(np.float32) * item.weight)
+                elif item.blend_mode == "Overlay":
+                    mask = result <= 127
+                    weighted_img = np.where(mask,
+                                          (2 * result * img.astype(np.float32)) / 255.0,
+                                          255 - (2 * (255 - result) * (255 - img.astype(np.float32))) / 255.0)
+                    weighted_img *= item.weight
+                else:
+                    weighted_img = img.astype(np.float32) * item.weight
+                
+                result += weighted_img
+                total_weight += item.weight
+            
+            # 归一化
+            if total_weight > 0:
+                result = np.clip(result / total_weight, 0, 255)
+            
+            # 转换为RGB格式（OpenCV使用BGR格式）
+            result = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2RGB)
+            
+            # 创建QImage并显示
+            height, width = result.shape[:2]
+            bytes_per_line = 3 * width
+            q_img = QImage(result.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            
+            # 保持纵横比缩放到预览区域
+            scaled_pixmap = QPixmap.fromImage(q_img).scaled(
+                400, 400,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            self.preview_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "预览错误", f"更新预览时出错：{str(e)}")
+            self.preview_label.clear()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
