@@ -148,20 +148,22 @@ class NormalMapBlender(QMainWindow):
                 # 更新数据模型
                 task_index = self.task_tree.indexOfTopLevelItem(item)
                 if task_index >= 0 and task_index < len(self.tasks):
-                    self.tasks[task_index].name = new_name
+                    self.tasks[task_index].name = new_name  # 确保更新任务对象的名称
+                    print(f"Task renamed to: {new_name}")  # 添加调试输出
 
     def add_task(self):
         task_name = f"blende-task-{len(self.tasks) + 1}"
-        task = BlendTask(task_name)
+        task = BlendTask(task_name)  # 确保创建任务时设置了名称
         self.tasks.append(task)
         
         task_item = QTreeWidgetItem(self.task_tree)
         task_item.setText(0, task_name)
-        task_item.setFlags(task_item.flags() | Qt.ItemFlag.ItemIsEditable)  # 允许编辑
+        task_item.setFlags(task_item.flags() | Qt.ItemFlag.ItemIsEditable)
         self.task_tree.addTopLevelItem(task_item)
         
         # 选中新添加的任务
         self.task_tree.setCurrentItem(task_item)
+        print(f"New task created: {task_name}")  # 添加调试输出
     
     def add_item(self):
         current_task = self.get_selected_task()
@@ -258,6 +260,8 @@ class NormalMapBlender(QMainWindow):
         
         try:
             success_count = 0
+            export_info = []  # 用于收集导出信息
+            
             for task in self.tasks:
                 if not task.items:
                     continue
@@ -265,19 +269,26 @@ class NormalMapBlender(QMainWindow):
                 # 生成该任务的混合结果
                 result = self.blend_task_maps(task)
                 if result is not None:
-                    # 使用任务名称作为文件名
-                    output_filename = f"{task.name}.png"
+                    # 使用任务名称作为文件名，确保文件名合法
+                    safe_name = "".join(c for c in task.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    if not safe_name:
+                        safe_name = f"blende-task-{self.tasks.index(task) + 1}"
+                    
+                    output_filename = f"{safe_name}.png"
                     output_path = os.path.join(self.output_dir, output_filename)
                     
                     # 保存混合结果
                     cv2.imwrite(output_path, result)
                     success_count += 1
+                    export_info.append(f"任务 '{task.name}' => {output_filename}")
+                    print(f"Exporting task '{task.name}' to {output_filename}")  # 添加调试输出
             
             if success_count > 0:
+                export_details = "\n".join(export_info)
                 QMessageBox.information(
                     self,
                     "导出成功",
-                    f"成功导出 {success_count} 个混合图像到：\n{self.output_dir}"
+                    f"成功导出 {success_count} 个混合图像：\n\n{export_details}\n\n保存位置：\n{self.output_dir}"
                 )
             else:
                 QMessageBox.warning(self, "警告", "没有可导出的混合结果")
