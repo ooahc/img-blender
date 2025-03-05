@@ -113,8 +113,8 @@ class NormalMapBlender(QMainWindow):
         output_controls = QVBoxLayout()
         btn_output = QPushButton("选择输出目录")
         btn_output.clicked.connect(self.select_output_dir)
-        btn_blend = QPushButton("开始混合")
-        btn_blend.clicked.connect(self.blend_normal_maps)
+        btn_blend = QPushButton("导出全部混合图")
+        btn_blend.clicked.connect(self.export_all_blended_maps)
         output_controls.addWidget(btn_output)
         output_controls.addWidget(btn_blend)
         right_layout.addLayout(output_controls)
@@ -246,47 +246,103 @@ class NormalMapBlender(QMainWindow):
         if dir_path:
             self.output_dir = dir_path
     
-    def blend_normal_maps(self):
-        if len(self.tasks) < 1:
-            QMessageBox.warning(self, "警告", "请至少添加一个任务")
+    def export_all_blended_maps(self):
+        """导出所有任务的混合结果"""
+        if not self.tasks:
+            QMessageBox.warning(self, "警告", "没有可导出的任务")
             return
-            
+        
         if not self.output_dir:
-            QMessageBox.warning(self, "警告", "请选择输出目录")
+            QMessageBox.warning(self, "警告", "请先选择输出目录")
             return
         
         try:
+            success_count = 0
+            for task in self.tasks:
+                if not task.items:
+                    continue
+                
+                # 生成该任务的混合结果
+                result = self.blend_task_maps(task)
+                if result is not None:
+                    # 使用任务名称作为文件名
+                    output_filename = f"{task.name}.png"
+                    output_path = os.path.join(self.output_dir, output_filename)
+                    
+                    # 保存混合结果
+                    cv2.imwrite(output_path, result)
+                    success_count += 1
+            
+            if success_count > 0:
+                QMessageBox.information(
+                    self,
+                    "导出成功",
+                    f"成功导出 {success_count} 个混合图像到：\n{self.output_dir}"
+                )
+            else:
+                QMessageBox.warning(self, "警告", "没有可导出的混合结果")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "导出错误", f"导出过程中出错：{str(e)}")
+
+    def blend_task_maps(self, task):
+        """混合指定任务的所有法线贴图"""
+        if not task.items:
+            return None
+        
+        try:
             # 读取第一张图确定尺寸
-            first_map = cv2.imread(self.tasks[0].items[0].path)
+            first_map = cv2.imread(task.items[0].path)
+            if first_map is None:
+                raise Exception(f"无法读取图像: {task.items[0].path}")
+            
             height, width = first_map.shape[:2]
             
             # 初始化结果数组
             result = np.zeros_like(first_map, dtype=np.float32)
             total_weight = 0
             
-            # 混合所有法线贴图
-            for task in self.tasks:
-                for item in task.items:
-                    img = cv2.imread(item.path)
-                    if img.shape[:2] != (height, width):
-                        img = cv2.resize(img, (width, height))
-                    
-                    weight = item.weight
-                    result += img.astype(np.float32) * weight
-                    total_weight += weight
+            # 混合所有启用的法线贴图
+            for item in task.items:
+                if not item.enabled:
+                    continue
+                
+                img = cv2.imread(item.path)
+                if img is None:
+                    continue
+                
+                if img.shape[:2] != (height, width):
+                    img = cv2.resize(img, (width, height))
+                
+                # 根据混合模式处理
+                if item.blend_mode == "Normal":
+                    weighted_img = img.astype(np.float32) * item.weight
+                elif item.blend_mode == "Multiply":
+                    weighted_img = (img.astype(np.float32) / 255.0) * result
+                    weighted_img *= item.weight
+                elif item.blend_mode == "Add":
+                    weighted_img = result + (img.astype(np.float32) * item.weight)
+                elif item.blend_mode == "Overlay":
+                    mask = result <= 127
+                    weighted_img = np.where(mask,
+                                          (2 * result * img.astype(np.float32)) / 255.0,
+                                          255 - (2 * (255 - result) * (255 - img.astype(np.float32))) / 255.0)
+                    weighted_img *= item.weight
+                else:
+                    weighted_img = img.astype(np.float32) * item.weight
+                
+                result += weighted_img
+                total_weight += item.weight
             
             # 归一化
             if total_weight > 0:
-                result /= total_weight
+                result = np.clip(result / total_weight, 0, 255)
             
-            # 保存结果
-            output_path = os.path.join(self.output_dir, "blended_normal.png")
-            cv2.imwrite(output_path, result.astype(np.uint8))
-            
-            QMessageBox.information(self, "成功", f"混合完成！\n保存至：{output_path}")
-            
+            return result.astype(np.uint8)
+        
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"处理过程中出现错误：{str(e)}")
+            QMessageBox.critical(self, "混合错误", f"混合过程中出错：{str(e)}")
+            return None
 
     def get_selected_task(self):
         """获取当前选中的任务"""
@@ -382,55 +438,14 @@ class NormalMapBlender(QMainWindow):
             return
         
         try:
-            # 读取第一张图确定尺寸
-            first_map = cv2.imread(current_task.items[0].path)
-            if first_map is None:
-                raise Exception(f"无法读取图像: {current_task.items[0].path}")
-            
-            height, width = first_map.shape[:2]
-            
-            # 初始化结果数组
-            result = np.zeros_like(first_map, dtype=np.float32)
-            total_weight = 0
-            
-            # 混合所有启用的法线贴图
-            for item in current_task.items:
-                if not item.enabled:
-                    continue
-                
-                img = cv2.imread(item.path)
-                if img is None:
-                    continue
-                
-                if img.shape[:2] != (height, width):
-                    img = cv2.resize(img, (width, height))
-                
-                # 根据混合模式处理
-                if item.blend_mode == "Normal":
-                    weighted_img = img.astype(np.float32) * item.weight
-                elif item.blend_mode == "Multiply":
-                    weighted_img = (img.astype(np.float32) / 255.0) * result
-                    weighted_img *= item.weight
-                elif item.blend_mode == "Add":
-                    weighted_img = result + (img.astype(np.float32) * item.weight)
-                elif item.blend_mode == "Overlay":
-                    mask = result <= 127
-                    weighted_img = np.where(mask,
-                                          (2 * result * img.astype(np.float32)) / 255.0,
-                                          255 - (2 * (255 - result) * (255 - img.astype(np.float32))) / 255.0)
-                    weighted_img *= item.weight
-                else:
-                    weighted_img = img.astype(np.float32) * item.weight
-                
-                result += weighted_img
-                total_weight += item.weight
-            
-            # 归一化
-            if total_weight > 0:
-                result = np.clip(result / total_weight, 0, 255)
+            # 使用通用的混合方法获取结果
+            result = self.blend_task_maps(current_task)
+            if result is None:
+                self.preview_label.clear()
+                return
             
             # 转换为RGB格式（OpenCV使用BGR格式）
-            result = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2RGB)
+            result = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
             
             # 创建QImage并显示
             height, width = result.shape[:2]
