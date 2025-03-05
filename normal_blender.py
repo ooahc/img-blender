@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QPushButton, QFileDialog, 
                             QSpinBox, QDoubleSpinBox, QListWidget, QMessageBox,
                             QTreeWidget, QTreeWidgetItem, QTableWidget, 
-                            QTableWidgetItem, QComboBox)
+                            QTableWidgetItem, QComboBox, QInputDialog)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage
 import cv2
@@ -120,7 +120,36 @@ class NormalMapBlender(QMainWindow):
         right_layout.addLayout(output_controls)
         
         main_layout.addWidget(right_panel)
+        
+        # 在 init_ui 中添加树的选择变更信号连接
+        self.task_tree.itemSelectionChanged.connect(self.on_selection_changed)
+        # 添加双击编辑支持
+        self.task_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
     
+    def on_selection_changed(self):
+        """当选择改变时更新参数表格和预览"""
+        self.update_param_table()
+        self.update_preview()
+
+    def on_item_double_clicked(self, item, column):
+        """处理项目双击事件"""
+        if not item.parent():  # 只允许编辑任务名称
+            current_name = item.text(0)
+            new_name, ok = QInputDialog.getText(
+                self,
+                "重命名任务",
+                "请输入新的任务名称：",
+                text=current_name
+            )
+            
+            if ok and new_name:
+                # 更新树项显示
+                item.setText(0, new_name)
+                # 更新数据模型
+                task_index = self.task_tree.indexOfTopLevelItem(item)
+                if task_index >= 0 and task_index < len(self.tasks):
+                    self.tasks[task_index].name = new_name
+
     def add_task(self):
         task_name = f"blende-task-{len(self.tasks) + 1}"
         task = BlendTask(task_name)
@@ -128,7 +157,11 @@ class NormalMapBlender(QMainWindow):
         
         task_item = QTreeWidgetItem(self.task_tree)
         task_item.setText(0, task_name)
+        task_item.setFlags(task_item.flags() | Qt.ItemFlag.ItemIsEditable)  # 允许编辑
         self.task_tree.addTopLevelItem(task_item)
+        
+        # 选中新添加的任务
+        self.task_tree.setCurrentItem(task_item)
     
     def add_item(self):
         current_task = self.get_selected_task()
@@ -143,24 +176,27 @@ class NormalMapBlender(QMainWindow):
             "图像文件 (*.png *.jpg *.jpeg)"
         )
         
-        if not files:  # 如果用户取消选择，直接返回
+        if not files:
             return
-        
+            
         current_tree_item = self.task_tree.currentItem()
         # 如果当前选中的是子项，获取其父项
         if current_tree_item.parent():
             current_tree_item = current_tree_item.parent()
-        
+            
         for file in files:
-            item_name = f"blende-item-{len(current_task.items) + 1}"
-            blend_item = BlendItem(item_name, file)
+            # 使用文件名作为项目名称
+            file_name = os.path.basename(file)
+            blend_item = BlendItem(file_name, file)
             current_task.items.append(blend_item)
             
-            # 创建新的树项目
+            # 创建新的树项目，只显示文件名
             item = QTreeWidgetItem(current_tree_item)
-            item.setText(0, f"{item_name} ({os.path.basename(file)})")
-        
+            item.setText(0, file_name)
+    
+        # 更新界面
         self.update_param_table()
+        self.update_preview()
     
     def remove_task(self):
         current_row = self.task_tree.currentRow()
@@ -281,8 +317,9 @@ class NormalMapBlender(QMainWindow):
         for index, item in enumerate(current_task.items):
             self.param_table.insertRow(index)
             
-            # 名称
-            name_item = QTableWidgetItem(item.name)
+            # 名称（使用文件名）
+            name_item = QTableWidgetItem(os.path.basename(item.path))
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)  # 禁止编辑
             self.param_table.setItem(index, 0, name_item)
             
             # 权重
@@ -295,7 +332,7 @@ class NormalMapBlender(QMainWindow):
             
             # 混合模式
             blend_mode_combo = QComboBox()
-            blend_modes = ["Normal", "Multiply", "Add", "Overlay"]  # 可以添加更多混合模式
+            blend_modes = ["Normal", "Multiply", "Add", "Overlay"]
             blend_mode_combo.addItems(blend_modes)
             blend_mode_combo.setCurrentText(item.blend_mode)
             blend_mode_combo.currentTextChanged.connect(lambda text, row=index: self.update_item_blend_mode(row, text))
@@ -304,6 +341,7 @@ class NormalMapBlender(QMainWindow):
             # 启用状态
             enabled_item = QTableWidgetItem()
             enabled_item.setCheckState(Qt.CheckState.Checked if item.enabled else Qt.CheckState.Unchecked)
+            enabled_item.setFlags(enabled_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             self.param_table.setItem(index, 3, enabled_item)
         
         self.param_table.resizeColumnsToContents()
