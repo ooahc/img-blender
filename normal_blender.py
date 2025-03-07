@@ -256,10 +256,12 @@ class NormalMapBlender(QMainWindow):
         self.update_preview()
     
     def remove_task(self):
-        current_row = self.task_tree.currentRow()
-        if current_row >= 0:
-            self.task_tree.takeTopLevelItem(current_row)
-            self.tasks.pop(current_row)
+        current_item = self.task_tree.currentItem()
+        if current_item:
+            index = self.task_tree.indexOfTopLevelItem(current_item)
+            if index >= 0:
+                self.task_tree.takeTopLevelItem(index)
+                self.tasks.pop(index)
     
     def remove_item(self):
         """删除选中的任务或子项"""
