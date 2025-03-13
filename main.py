@@ -65,7 +65,7 @@ class BlendItem:
 class NormalMapBlender(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("法线贴图混合工具")
+        self.setWindowTitle("image blender")
         self.setMinimumSize(1200, 800)
         
         # 数据存储
